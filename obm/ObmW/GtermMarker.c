@@ -120,6 +120,7 @@ static XtActionsRec markerActionsList[] = {
 
 /* GtMarkerInit -- Initialize the marker subsystem.
  */
+void
 GtMarkerInit (w)
     GtermWidget w;
 {
@@ -507,6 +508,7 @@ GmCreate (w, type, interactive)
 
 /* GmDestroy -- Destroy a marker.
  */
+int
 GmDestroy (gm)
     register Marker gm;
 {
@@ -639,6 +641,7 @@ fail:
 
 /* GmAddCallback -- Add a callback to a marker.
  */
+void
 GmAddCallback (gm, events, func, client_data)
     register Marker gm;
     int events;			/* events callback is to receive */
@@ -729,6 +732,7 @@ GmSelect (w, x, y, what)
  * the marker.  This is used to erase the old marker when the modified
  * marker is later redrawn.
  */
+void
 GmMarkpos (gm)
     register Marker gm;
 {
@@ -742,6 +746,7 @@ GmMarkpos (gm)
  * old marker is first erased, then any markers affected by the erase are
  * redrawn, and finally the current marker is redrawn at the new location.
  */
+void
 GmRedraw (gm, func, erase)
     Marker gm;
     int func;
@@ -858,6 +863,7 @@ GmRedraw (gm, func, erase)
 /* GmRedisplay -- Redisplay the markers in the given region, or redisplay
  * the entire window if the region is given as (char *)NULL.
  */
+void
 GmRedisplay (w, region)
     GtermWidget w;
     Region region;
@@ -897,6 +903,7 @@ GmRedisplay (w, region)
 /* GmRaise -- Change the stacking order of a marker relative to another
  * marker, causing the first marker to be drawn above the second.
  */
+void
 GmRaise (gm, ref_gm)
     register Marker gm, ref_gm;
 {
@@ -920,6 +927,7 @@ GmRaise (gm, ref_gm)
 /* GmLower -- Change the stacking order of a marker relative to another
  * marker, causing the first marker to be drawn below the second.
  */
+void
 GmLower (gm, ref_gm)
     register Marker gm, ref_gm;
 {
@@ -952,6 +960,7 @@ GmLower (gm, ref_gm)
 /* GmNotify -- Notify any clients that have registered callbacks that the
  * given marker events have occurred.
  */
+void
 GmNotify (gm, events, event, params, nparams)
     register Marker gm;
     int events;
@@ -965,6 +974,7 @@ GmNotify (gm, events, event, params, nparams)
 
 /* GmAddPt -- Add a point to a marker.
  */
+void
 GmAddPt (gm, x, y)
     register Marker gm;
     int x, y;
@@ -981,6 +991,7 @@ GmAddPt (gm, x, y)
 
 /* GmDeletePt -- Delete a point from a marker.
  */
+void
 GmDeletePt (gm, x, y)
     register Marker gm;
     int x, y;
@@ -997,6 +1008,7 @@ GmDeletePt (gm, x, y)
 
 /* GmMovePt -- Move a point within a marker.
  */
+void
 GmMovePt (gm, x, y)
     register Marker gm;
     int x, y;
@@ -1012,6 +1024,7 @@ GmMovePt (gm, x, y)
 
 /* GmMove -- Move a marker.
  */
+void
 GmMove (gm, x, y)
     register Marker gm;
     int x, y;
@@ -1027,6 +1040,7 @@ GmMove (gm, x, y)
 
 /* GmResize -- Resize a marker.
  */
+void
 GmResize (gm, x, y)
     register Marker gm;
     int x, y;
@@ -1042,6 +1056,7 @@ GmResize (gm, x, y)
 
 /* GmRotate -- Rotate a marker.
  */
+void
 GmRotate (gm, x, y)
     register Marker gm;
     int x, y;
@@ -1059,6 +1074,7 @@ GmRotate (gm, x, y)
  * values be specified in the same type.  Autoredraw, if enabled, is suspended
  * until all attributes have been changed.
  */
+int
 GmSetAttributes (gm, args, nargs, argtype)
     register Marker gm;
     ArgList args;
@@ -1091,6 +1107,7 @@ GmSetAttributes (gm, args, nargs, argtype)
 
 /* GmSetAttribute -- Set the value of a marker attribute.
  */
+int
 GmSetAttribute (gm, attribute, value, type)
     register Marker gm;
     char *attribute;
@@ -1339,6 +1356,7 @@ GmSetAttribute (gm, attribute, value, type)
 /* GmGetAttributes -- Get a list of attributes.  Requires that all attribute
  * values be specified in the same type.
  */
+void
 GmGetAttributes (gm, args, nargs, argtype)
     register Marker gm;
     ArgList args;
@@ -1354,6 +1372,7 @@ GmGetAttributes (gm, args, nargs, argtype)
 
 /* GmGetAttribute -- Get the value of a marker attribute.
  */
+int
 GmGetAttribute (gm, attribute, value, type)
     register Marker gm;
     char *attribute;
@@ -1578,6 +1597,7 @@ GmGetAttribute (gm, attribute, value, type)
 
 /* GmSetVertices -- Set the vertices of a "poly" type object.
  */
+void
 GmSetVertices (gm, points, first, npts)
     Marker gm;
     DPoint *points;		/* input array of points */
@@ -1654,6 +1674,7 @@ GmSetVertices (gm, points, first, npts)
 /* GmGetVertices -- Get the vertices of a "poly" type object.  The actual
  * number of points output is returned as the function value.
  */
+int
 GmGetVertices (gm, points, first, maxpts)
     register Marker gm;
     register DPoint *points;	/* output array of points */
@@ -1691,6 +1712,7 @@ GmGetVertices (gm, points, first, maxpts)
 /* GmGetBoundingBox -- Returns a rect large enough to completely enclose a
  * marker, regardless of its type or orientation.
  */
+void
 GmGetBoundingBox (gm, x, y, width, height)
     register Marker gm;
     int *x, *y;
@@ -1707,6 +1729,7 @@ GmGetBoundingBox (gm, x, y, width, height)
 
 /* GmStrToType -- Convert a marker type string to a marker type code.
  */
+int
 GmStrToType (marker_type)
 register char *marker_type;
 {
@@ -1737,6 +1760,7 @@ register char *marker_type;
 
 /* GmStrToEvent -- Convert a marker event type string to a marker event code.
  */
+int
 GmStrToEvent (event_type)
 register char *event_type;
 {
@@ -1770,6 +1794,7 @@ register char *event_type;
 /* GmStrToFunction -- Convert a drawing function string to the corresponding
  * XLIB function code.
  */
+int
 GmStrToFunction (function)
 register char *function;
 {
@@ -2204,7 +2229,7 @@ gm_constraint (gm, new_gm, what)
 
     /* Return immediately if there are no constraint callbacks. */
     if (!gm->constraints)
-	return;
+	return 0;
 
     /* Prepare an argument list listing the marker attributes being changed
      * and their old and new values.  Each attribute is passed as three
@@ -3371,7 +3396,7 @@ static void
 gm_rect_updatePolygon (gm)
     Marker gm;
 {
-    register x, y;
+    register int x, y;
     register XPoint *p = gm->points;
     double cos_rotangle, sin_rotangle;
 
@@ -3548,7 +3573,7 @@ static void
 gm_boxx_updatePolygon (gm)
     Marker gm;
 {
-    register x, y;
+    register int x, y;
     register XPoint *p = gm->points;
     double cos_rotangle, sin_rotangle;
 	
@@ -4289,7 +4314,7 @@ static void
 gm_pgon_updatePolygon (gm)
     Marker gm;
 {
-    register npts, i;
+    register int npts, i;
     register DPoint *ip = gm->pgon;
     register XPoint *op = gm->points;
     double cos_rotangle, sin_rotangle;
@@ -4457,6 +4482,7 @@ gm_select (gm, x, y, what)
     return (0);
 }
 
+int
 point_in_poly (npol, xp, yp, x, y)
 int 	npol;
 float 	*xp, *yp, x, y;

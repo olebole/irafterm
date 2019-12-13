@@ -85,14 +85,14 @@ count (s, c)
     return i;
 }
 
-yysetsource(s)
-    char    *s;
+void
+yysetsource(char *s)
 {
     yysourcebase = yysource = s;
 }
 
-yyerror(s)
-    char    *s;
+void
+yyerror(char *s)
 {
     char    *t;
     

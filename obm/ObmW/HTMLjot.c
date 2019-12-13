@@ -54,6 +54,7 @@
 /* #ifdef MOTIF */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include "inkstore.h"
 #include "HTMLP.h"
 

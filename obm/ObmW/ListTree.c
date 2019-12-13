@@ -26,9 +26,10 @@
 
 #include <X11/IntrinsicP.h>
 #include <X11/StringDefs.h>
+#include <X11/Xmu/Drawing.h>
 
 #include <stdio.h>
-/*#include <stdlib.h> */
+#include <stdlib.h>
 
 #include "ListTreeP.h"
 #ifdef USE_RDD
@@ -2024,18 +2025,22 @@ ListTreeFindSiblingName(ListTreeWidget w, ListTreeItem *item, char *name)
   return NULL;
 }
 
+void
 ListTreeOpen(ListTreeWidget w, ListTreeItem *item)
 {
   item->open = True;
   ListTreeRefresh(w);
 }
 
+static void
 ListTreeClose(ListTreeWidget w, ListTreeItem *item)
 {
   item->open = False;
   ListTreeRefresh(w);
 }
 
+
+void
 ListTreeOpenAll(ListTreeWidget w, ListTreeItem *start, int child_only)
 {
   ListTreeItem *item;
@@ -2057,6 +2062,7 @@ ListTreeOpenAll(ListTreeWidget w, ListTreeItem *start, int child_only)
   ListTreeRefresh(w);
 }
 
+void
 ChildrenOpen (ListTreeWidget w, ListTreeItem *item)
 {
   while (item) {
@@ -2067,7 +2073,7 @@ ChildrenOpen (ListTreeWidget w, ListTreeItem *item)
   }
 }
 
-
+void
 ListTreeCloseAll(ListTreeWidget w, ListTreeItem *start, int child_only)
 {
   ListTreeItem *item;
@@ -2089,6 +2095,7 @@ ListTreeCloseAll(ListTreeWidget w, ListTreeItem *start, int child_only)
   ListTreeRefresh(w);
 }
 
+void
 ChildrenClose (ListTreeWidget w, ListTreeItem *item)
 {
   while (item) {
