@@ -377,8 +377,8 @@ int state;
 		if (status != TCL_OK) {
 		    char *errstr = Tcl_GetVar (obm->tcl, "errorInfo", 0);
 		    fprintf (stderr, "Error on line %d in activate: %s\n",
-			obm->tcl->errorLine,
-			errstr ? errstr : obm->tcl->result);
+			Tcl_GetErrorLine (obm->tcl),
+			errstr ? errstr : Tcl_GetStringResult (obm->tcl));
 		}
 	    }
 }
@@ -458,8 +458,8 @@ char *message;
 		if (status != TCL_OK) {
 		    char *errstr = Tcl_GetVar (obm->tcl, "errorInfo", 0);
 		    fprintf (stderr, "Error in message to %s, line %d: %s\n",
-			object, obm->tcl->errorLine,
-			errstr ? errstr : obm->tcl->result);
+			object, Tcl_GetErrorLine (obm->tcl),
+			     errstr ? errstr : Tcl_GetStringResult (obm->tcl));
 		}
 	    } else
 		status = TCL_OK;
