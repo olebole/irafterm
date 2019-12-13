@@ -5,10 +5,10 @@
 
 #include <X11/Xmu/Drawing.h>
 
-#include <X11/Xraw/XawInit.h>
-#include <X11/Xraw/3d.h>
-#include <X11/Xraw/SimpleP.h>
-#include <X11/Xraw/ContainerP.h>
+#include "Xraw/XawInit.h"
+#include "Xraw/3d.h"
+#include "Xraw/SimpleP.h"
+#include "Xraw/ContainerP.h"
 
 #define UnspecifiedPixmap (Pixmap)2
 #define UndefinedGC       (GC)2

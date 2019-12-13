@@ -40,7 +40,7 @@
 
 #include <X11/Xmu/Converters.h>
 
-#include <X11/Xraw/Sme.h>
+#include "Sme.h"
 
 /****************************************************************
  *

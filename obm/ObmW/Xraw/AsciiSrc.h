@@ -34,7 +34,7 @@
 #ifndef _XawAsciiSrc_h
 #define _XawAsciiSrc_h
 
-#include <X11/Xraw/TextSrc.h>
+#include "TextSrc.h"
 
 /* Resources:
 

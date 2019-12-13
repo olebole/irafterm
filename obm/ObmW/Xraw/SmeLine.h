@@ -38,7 +38,7 @@
 #ifndef _SmeLine_h
 #define _SmeLine_h
 
-#include <X11/Xraw/Sme.h>
+#include "Sme.h"
 #include <X11/Xmu/Converters.h>
 
 /****************************************************************

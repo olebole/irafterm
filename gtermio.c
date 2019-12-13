@@ -9,8 +9,8 @@
 #include <X11/StringDefs.h>
 #include <X11/Xaw/Cardinals.h>
 #include <X11/Shell.h>
-#include <ObmW/Gterm.h>
-#include <Obm.h>
+#include "obm/ObmW/Gterm.h"
+#include "obm/Obm.h"
 
 #include "gtermio.h"
 

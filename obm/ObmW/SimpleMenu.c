@@ -43,12 +43,12 @@
 #include <X11/IntrinsicP.h>
 #include <X11/StringDefs.h>
 
-#include <X11/Xraw/XawInit.h>
-#include <X11/Xraw/3d.h>
-#include <X11/Xraw/SimpleMenP.h>
-#include <X11/Xraw/SmeBSB.h>
-#include <X11/Xraw/Cardinals.h>
-#include <X11/Xraw/SmeLineP.h>
+#include "Xraw/XawInit.h"
+#include "Xraw/3d.h"
+#include "Xraw/SimpleMenP.h"
+#include "Xraw/SmeBSB.h"
+#include "Xraw/Cardinals.h"
+#include "Xraw/SmeLineP.h"
 
 #include <X11/Xmu/Initer.h>
 #include <X11/Xmu/CharSet.h>

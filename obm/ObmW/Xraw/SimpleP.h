@@ -3,8 +3,8 @@
 
 #include <X11/IntrinsicP.h>
 
-#include <X11/Xraw/XawInit.h>
-#include <X11/Xraw/Simple.h>
+#include "XawInit.h"
+#include "Simple.h"
 
 #define SIMPLE(w) ((SimpleWidget) w)->simple
 

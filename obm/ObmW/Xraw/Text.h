@@ -30,8 +30,8 @@ SOFTWARE.
 #ifndef _XawText_h
 #define _XawText_h
 
-#include <X11/Xraw/TextSink.h>
-#include <X11/Xraw/TextSrc.h>
+#include "TextSink.h"
+#include "TextSrc.h"
 
 /****************************************************************
  *
@@ -307,8 +307,8 @@ extern XawTextPosition XawTextSearch() ; /* w, dir, text */
  * For R3 compatability only. 
  */
 
-#include <X11/Xraw/AsciiSrc.h>
-#include <X11/Xraw/AsciiSink.h>
+#include "AsciiSrc.h"
+#include "AsciiSink.h"
 
 #endif /* _XawText_h */
 /* DON'T ADD STUFF AFTER THIS #endif */

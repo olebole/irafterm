@@ -27,8 +27,8 @@ SOFTWARE.
 #ifndef _XawViewport_h
 #define _XawViewport_h
 
-#include <X11/Xraw/Form.h>
-#include <X11/Xraw/Reports.h>
+#include "Form.h"
+#include "Reports.h"
 
 /* Resources:
 

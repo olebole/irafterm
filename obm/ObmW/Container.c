@@ -2,9 +2,9 @@
 
 #include <X11/IntrinsicP.h>
 #include <X11/StringDefs.h>
-#include <X11/Xraw/XawInit.h>
-#include <X11/Xraw/3d.h>
-#include <X11/Xraw/ContainerP.h>
+#include "Xraw/XawInit.h"
+#include "Xraw/3d.h"
+#include "Xraw/ContainerP.h"
 
 
 

@@ -54,8 +54,8 @@ SOFTWARE.
  *
  ****************************************************************/
 
-#include <X11/Xraw/Text.h>		/* AsciiText is a subclass of Text */
-#include <X11/Xraw/AsciiSrc.h>
+#include "Text.h"		/* AsciiText is a subclass of Text */
+#include "AsciiSrc.h"
 
 /* Resources:
 

@@ -35,7 +35,7 @@ SOFTWARE.
  *
  ***********************************************************************/
 
-#include <X11/Xraw/TextSink.h>
+#include "TextSink.h"
 
 /* Resources:
 

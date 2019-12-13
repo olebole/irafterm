@@ -36,9 +36,9 @@
 #define _SimpleMenuP_h
 
 #include <X11/ShellP.h>
-#include <X11/Xraw/3d.h>
-#include <X11/Xraw/SimpleMenu.h>
-#include <X11/Xraw/SmeP.h>
+#include "3d.h"
+#include "SimpleMenu.h"
+#include "SmeP.h"
 
 #define SMW(w) ((SimpleMenuWidget)w)->simple_menu
 
