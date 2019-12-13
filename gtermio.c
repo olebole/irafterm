@@ -453,6 +453,7 @@ int state;
 	    XrmDatabase db1, db2;
 	    char *fname, buf[256];
 
+#if 0 /* We don't have a parent widget, so we can't merge them... */
 	    /* Merge XGterm resources into GUI.  There ought to be a way
 	     * to do this without writing a temporary file, but there
 	     * appears to be no alternative at present.
@@ -471,6 +472,7 @@ int state;
 		XtVaSetValues (toplevel, XtNgeometry, 
 		    gtermio_getResource ("geometry"), NULL);
 	    }
+#endif
 
 	    XtAugmentTranslations (toplevel,
 		XtParseTranslationTable (gio_shellTrans));

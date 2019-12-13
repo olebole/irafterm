@@ -1,4 +1,4 @@
-OBJS = ptywrapper.o gtermio.o
+OBJS = ptywrapper.o gtermio.o dummy.o
 
 all: irafterm
 
