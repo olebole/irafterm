@@ -1,20 +1,19 @@
-/* graphicsplitter.c
+/*
+ * graphicsplitter.c
  *
  * PTY launcher + graphic escape sequence splitter for IRAF.
- * - runs a command under a PTY
- * - intercepts selected graphic escape sequences (configurable)
- * - appends intercepted sequences to gfx.log (binary)
- * - forwards all other bytes to the original terminal (stdout)
- * - propagates terminal window size (winsize) to the slave PTY and forwards SIGWINCH
+ * - erkennt klassische ESC/CSI/OSC/DCS Sequenzen (robust gegen CR/LF/NUL und
+ *   zusätzliche control separators 0x1d/0x19)
+ * - erkennt Start/End Marker 0x1d 0x19 ... 0x1d 0x18 und schreibt alles dazwischen
+ *   binär in gfx.log
  *
  * Build:
- *  Linux:  gcc -std=c11 -O2 -Wall -Wextra -o graphicsplitter graphicsplitter.c -lutil
- *  macOS:  gcc -std=c11 -O2 -Wall -Wextra -o graphicsplitter graphicsplitter.c
+ *   Linux: gcc -std=c11 -O2 -Wall -Wextra -o graphicsplitter graphicsplitter.c -lutil
  *
  * Usage:
- *  GFX_PREFIX (optional): if set and non-empty, only sequences that start with this
- *                         prefix (after OSC/DCS/etc.) are intercepted.
- *  GFX_DEBUG  (optional): if set to 1, prints debug info to stderr about captures.
+ *   GFX_PREFIX (optional) : nur OSC/DCS mit diesem Präfix abfangen
+ *   GFX_DEBUG  (optional) : setze auf 1 für Debugausgaben auf stderr
+ *   GFX_DUMP_ALL (optional): setze auf 1 und GFX_DUMP_PATH für Rohdump aller PTY-Bytes
  */
 
 #define _XOPEN_SOURCE 700
@@ -49,6 +48,11 @@ static volatile sig_atomic_t winch_pending = 0;
 static const char *gfx_prefix = NULL;
 static int gfx_debug = 0;
 
+/* capture state: between 0x1d 0x19 (start) and 0x1d 0x18 (end) */
+static int capture_mode = 0;
+/* small state to detect marker split across reads */
+static unsigned char last_byte = 0;
+
 /* restore terminal attributes at exit */
 static void restore_term(void) {
     if (raw_fd_for_restore >= 0) tcsetattr(raw_fd_for_restore, TCSANOW, &orig_term);
@@ -62,18 +66,12 @@ static int set_raw_terminal(int fd) {
     raw_fd_for_restore = fd;
     atexit(restore_term);
 
-    /* input flags: disable parity, CR/NL translations, XON/XOFF */
-    t.c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP
-                   | INLCR | IGNCR | ICRNL | IXON);
-    /* output flags: disable post processing */
+    t.c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON);
     t.c_oflag &= ~OPOST;
-    /* local flags: disable echo, canonical mode, signals, extended functions */
     t.c_lflag &= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
-    /* control flags: set 8 bit chars */
     t.c_cflag &= ~(CSIZE | PARENB);
     t.c_cflag |= CS8;
 
-    /* minimum number of bytes and timeout for read */
     t.c_cc[VMIN] = 1;
     t.c_cc[VTIME] = 0;
 
@@ -124,7 +122,6 @@ static void propagate_winsize(int master_fd, int in_fd) {
     }
 
     if (got) {
-        /* set winsize on master PTY (propagates to slave) */
         (void)ioctl(master_fd, TIOCSWINSZ, &ws);
         if (gfx_debug) {
             fprintf(stderr, "gfx: propagated winsize to master_fd\n");
@@ -132,7 +129,18 @@ static void propagate_winsize(int master_fd, int in_fd) {
     }
 }
 
-/* Detect graphic sequences (conservative, prefix-based).
+/* Helper: skip optional separators (CR LF NUL and some control separators) starting at buf[pos], return new pos */
+static size_t skip_separators(const unsigned char *buf, size_t len, size_t pos) {
+    while (pos < len) {
+        unsigned char c = buf[pos];
+        /* allow CR, LF, NUL and control separators seen in dumps (GS 0x1d, EM 0x19) */
+        if (c == 0x0a || c == 0x0d || c == 0x00 || c == 0x1d || c == 0x19) pos++;
+        else break;
+    }
+    return pos;
+}
+
+/* Detect graphic sequences (robust, tolerant to CR/LF/NUL and separators).
  * Return values:
  *  >0  : number of bytes that form a complete graphic sequence
  *   0  : not a graphic sequence (caller should forward first byte(s))
@@ -140,47 +148,73 @@ static void propagate_winsize(int master_fd, int in_fd) {
  *  -2  : sequence too long (error)
  *
  * Behavior:
- *  - CSI (ESC [) is NOT treated as graphic (forwarded).
+ *  - Skip optional separators between ESC and next bytes.
+ *  - Accept CSI even if a '?' precedes '[' after optional separators.
  *  - OSC (ESC ]) and DCS/PM/APC (ESC P / ESC ^ / ESC _) are only treated as
  *    graphic if gfx_prefix is non-NULL and the payload starts with that prefix.
- *  - Empty gfx_prefix is treated as unset (see initialization in main).
  */
 static ssize_t detect_graphic_sequence(const unsigned char *buf, size_t len) {
-    /* If no bytes available, need more */
     if (len == 0) return -1;
+    if (buf[0] != 0x1B) return 0; /* not ESC */
 
-    /* If first byte is not ESC, it's not a control sequence */
-    if (buf[0] != 0x1B) return 0;
-
-    /* If we have only ESC and no second byte yet, need more */
     if (len < 2) return -1;
 
-    unsigned char second = buf[1];
+    size_t pos = 1;
+    pos = skip_separators(buf, len, pos);
+    if (pos >= len) return -1;
 
-    /* CSI: ESC [ -> do not intercept */
-    if (second == '[') return 0;
+    unsigned char second = buf[pos];
 
-    /* OSC: ESC ] ... BEL or ESC ] ... ESC '\' */
+    /* optional '?' before '[' */
+    if (second == '?') {
+        size_t pos2 = pos + 1;
+        pos2 = skip_separators(buf, len, pos2);
+        if (pos2 >= len) return -1;
+        if (buf[pos2] == '[') {
+            for (size_t i = pos2 + 1; i < len; ++i) {
+                unsigned char c = buf[i];
+                if (c >= 0x40 && c <= 0x7E) return (ssize_t)(i + 1);
+                if (i + 1 >= SEQ_MAX) return -2;
+            }
+            return -1;
+        }
+    }
+
+    /* CSI: ESC [ */
+    if (second == '[') {
+        for (size_t i = pos + 1; i < len; ++i) {
+            unsigned char c = buf[i];
+            if (c >= 0x40 && c <= 0x7E) return (ssize_t)(i + 1);
+            if (i + 1 >= SEQ_MAX) return -2;
+        }
+        return -1;
+    }
+
+    /* OSC: ESC ] ... BEL or ESC '\' */
     if (second == ']') {
-        if (!gfx_prefix) return 0; /* conservative: forward normal OSC */
+        if (!gfx_prefix) return 0;
         size_t pref_len = strlen(gfx_prefix);
-        if (len < 2 + pref_len) return -1;
-        if (memcmp(buf + 2, gfx_prefix, pref_len) != 0) return 0; /* not our OSC */
-        for (size_t i = 2 + pref_len; i < len; ++i) {
-            if (buf[i] == 0x07) return (ssize_t)(i + 1); /* BEL */
+        size_t payload_pos = pos + 1;
+        payload_pos = skip_separators(buf, len, payload_pos);
+        if (payload_pos + pref_len > len) return -1;
+        if (memcmp(buf + payload_pos, gfx_prefix, pref_len) != 0) return 0;
+        for (size_t i = payload_pos + pref_len; i < len; ++i) {
+            if (buf[i] == 0x07) return (ssize_t)(i + 1);
             if (i + 1 < len && buf[i] == 0x1B && buf[i+1] == '\\') return (ssize_t)(i + 2);
             if (i + 1 >= SEQ_MAX) return -2;
         }
         return -1;
     }
 
-    /* DCS / PM / APC / vendor private strings: ESC P / ESC ^ / ESC _ ... ESC '\' */
+    /* DCS / PM / APC: ESC P / ESC ^ / ESC _ ... ESC '\' */
     if (second == 'P' || second == '^' || second == '_' ) {
-        if (!gfx_prefix) return 0; /* conservative: do not intercept */
+        if (!gfx_prefix) return 0;
         size_t pref_len = strlen(gfx_prefix);
-        if (len < 2 + pref_len) return -1;
-        if (memcmp(buf + 2, gfx_prefix, pref_len) != 0) return 0; /* not our DCS */
-        for (size_t i = 2 + pref_len; i < len; ++i) {
+        size_t payload_pos = pos + 1;
+        payload_pos = skip_separators(buf, len, payload_pos);
+        if (payload_pos + pref_len > len) return -1;
+        if (memcmp(buf + payload_pos, gfx_prefix, pref_len) != 0) return 0;
+        for (size_t i = payload_pos + pref_len; i < len; ++i) {
             if (i + 1 < len && buf[i] == 0x1B && buf[i+1] == '\\') return (ssize_t)(i + 2);
             if (i + 1 >= SEQ_MAX) return -2;
         }
@@ -196,12 +230,8 @@ int main(int argc, char **argv) {
         return 2;
     }
 
-    /* configure which sequences to treat as graphic (optional) */
     const char *env_pref = getenv("GFX_PREFIX");
-    if (env_pref && env_pref[0] == '\0') {
-        /* treat empty string as unset to avoid matching everything */
-        env_pref = NULL;
-    }
+    if (env_pref && env_pref[0] == '\0') env_pref = NULL;
     gfx_prefix = env_pref;
     const char *dbg = getenv("GFX_DEBUG");
     gfx_debug = (dbg && (dbg[0] == '1' || dbg[0] == 'y' || dbg[0] == 'Y')) ? 1 : 0;
@@ -209,7 +239,6 @@ int main(int argc, char **argv) {
         fprintf(stderr, "gfx: GFX_PREFIX=%s GFX_DEBUG=%d\n", gfx_prefix ? gfx_prefix : "(null)", gfx_debug);
     }
 
-    /* prefer to set raw on stdin if it's a tty, otherwise try /dev/tty */
     int in_fd = STDIN_FILENO;
     int out_fd = STDOUT_FILENO;
 
@@ -220,8 +249,6 @@ int main(int argc, char **argv) {
         if (devtty >= 0) {
             if (set_raw_terminal(devtty) < 0) perror("set_raw_terminal(/dev/tty)");
             close(devtty);
-        } else {
-            /* not a tty; continue without raw mode */
         }
     }
 
@@ -233,41 +260,42 @@ int main(int argc, char **argv) {
     }
 
     if (pid == 0) {
-        /* child: exec target program */
         execvp(argv[1], &argv[1]);
         perror("execvp");
         _exit(127);
     }
 
-    /* parent */
     child_pid = pid;
-
-    /* propagate initial winsize to the slave PTY so child sees correct size */
     propagate_winsize(master_fd, in_fd);
 
-    /* set non-blocking on master and stdin */
     int flags = fcntl(master_fd, F_GETFL, 0);
     fcntl(master_fd, F_SETFL, flags | O_NONBLOCK);
     flags = fcntl(in_fd, F_GETFL, 0);
     fcntl(in_fd, F_SETFL, flags | O_NONBLOCK);
 
-    /* forward signals to child */
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sa.sa_handler = forward_signal;
     sigaction(SIGINT, &sa, NULL);
     sigaction(SIGTERM, &sa, NULL);
 
-    /* SIGWINCH: set flag and handle in main loop */
     struct sigaction sa_winch;
     memset(&sa_winch, 0, sizeof(sa_winch));
     sa_winch.sa_handler = sigwinch_handler;
     sigaction(SIGWINCH, &sa_winch, NULL);
 
-    /* open gfx log (binary append) */
     FILE *gfx = fopen("gfx.log", "ab");
     if (!gfx) {
         perror("fopen gfx.log (continuing without gfx logging)");
+    }
+
+    FILE *dumpf = NULL;
+    const char *dump_env = getenv("GFX_DUMP_ALL");
+    if (dump_env && (dump_env[0]=='1' || dump_env[0]=='y' || dump_env[0]=='Y')) {
+        const char *dump_path = getenv("GFX_DUMP_PATH");
+        if (!dump_path) dump_path = "/tmp/pty_dump.bin";
+        dumpf = fopen(dump_path, "ab");
+        if (!dumpf) perror("fopen pty_dump.bin");
     }
 
     unsigned char inbuf[BUF_SIZE];
@@ -281,7 +309,6 @@ int main(int argc, char **argv) {
 
     int status;
     while (1) {
-        /* handle pending window-size change */
         if (winch_pending) {
             winch_pending = 0;
             propagate_winsize(master_fd, in_fd);
@@ -298,15 +325,82 @@ int main(int argc, char **argv) {
             break;
         }
 
-        /* data from child (master PTY) */
         if (fds[0].revents & POLLIN) {
             ssize_t n = read(master_fd, inbuf, sizeof(inbuf));
             if (n <= 0) break;
 
+            if (dumpf && n > 0) {
+                fwrite(inbuf, 1, (size_t)n, dumpf);
+                fflush(dumpf);
+            }
+
+            /* --- Marker based capture: start at 0x1d 0x19, end at 0x1d 0x18 --- */
             size_t pos = 0;
+            if (!capture_mode) {
+                for (size_t i = 0; i < (size_t)n; ++i) {
+                    if (last_byte == 0x1d && inbuf[i] == 0x19) {
+                        capture_mode = 1;
+                        size_t write_from = i + 1;
+                        if (write_from < (size_t)n && gfx) {
+                            fwrite(inbuf + write_from, 1, (size_t)n - write_from, gfx);
+                            if (gfx_debug) fprintf(stderr, "gfx: marker start (split) found, wrote %zu bytes\n", (size_t)n - write_from);
+                            fflush(gfx);
+                        }
+                        pos = (size_t)n;
+                        last_byte = inbuf[(size_t)n - 1];
+                        break;
+                    }
+                    if (inbuf[i] == 0x1d && i + 1 < (size_t)n && inbuf[i+1] == 0x19) {
+                        capture_mode = 1;
+                        size_t write_from = i + 2;
+                        if (write_from < (size_t)n && gfx) {
+                            fwrite(inbuf + write_from, 1, (size_t)n - write_from, gfx);
+                            if (gfx_debug) fprintf(stderr, "gfx: marker start found at %zu, wrote %zu bytes\n", i, (size_t)n - write_from);
+                            fflush(gfx);
+                        }
+                        pos = (size_t)n;
+                        last_byte = inbuf[(size_t)n - 1];
+                        break;
+                    }
+                }
+                if (pos == 0) last_byte = inbuf[(size_t)n - 1];
+            } else {
+                int end_found = 0;
+                for (size_t i = 0; i < (size_t)n; ++i) {
+                    if (last_byte == 0x1d && inbuf[i] == 0x18) {
+                        capture_mode = 0;
+                        pos = i + 1;
+                        end_found = 1;
+                        if (gfx_debug) fprintf(stderr, "gfx: end marker (split) found at chunk boundary\n");
+                        break;
+                    }
+                    if (inbuf[i] == 0x1d && i + 1 < (size_t)n && inbuf[i+1] == 0x18) {
+                        if (i > 0 && gfx) {
+                            fwrite(inbuf, 1, i, gfx);
+                            if (gfx_debug) fprintf(stderr, "gfx: end marker found at %zu, wrote %zu bytes\n", i, i);
+                            fflush(gfx);
+                        }
+                        capture_mode = 0;
+                        pos = i + 2;
+                        end_found = 1;
+                        break;
+                    }
+                    last_byte = inbuf[i];
+                }
+                if (!end_found) {
+                    if (gfx) {
+                        fwrite(inbuf, 1, (size_t)n, gfx);
+                        if (gfx_debug) fprintf(stderr, "gfx: capture active, wrote %zd bytes\n", n);
+                        fflush(gfx);
+                    }
+                    last_byte = inbuf[(size_t)n - 1];
+                    continue;
+                }
+            }
+
+            /* remaining bytes (pos < n) are processed normally */
             while (pos < (size_t)n) {
                 if (seq_len > 0) {
-                    /* append to partial sequence buffer */
                     size_t want = (size_t)n - pos;
                     size_t tocopy = (SEQ_MAX - seq_len < want) ? (SEQ_MAX - seq_len) : want;
                     memcpy(seqbuf + seq_len, inbuf + pos, tocopy);
@@ -327,22 +421,19 @@ int main(int argc, char **argv) {
                         seq_len = remain;
                         continue;
                     } else if (det == -1) {
-                        continue; /* need more bytes */
+                        continue;
                     } else if (det == -2) {
-                        /* too long: drop and reset */
                         if (gfx_debug) fprintf(stderr, "gfx: sequence too long, dropping\n");
                         seq_len = 0;
                         continue;
                     } else {
-                        /* not a sequence: flush first byte */
-                        if (write_all(out_fd, seqbuf, 1) < 0) { /* ignore */ }
+                        if (write_all(out_fd, seqbuf, 1) < 0) { }
                         if (seq_len > 1) memmove(seqbuf, seqbuf + 1, seq_len - 1);
                         seq_len -= 1;
                         continue;
                     }
                 }
 
-                /* no partial sequence: detect starting at inbuf+pos */
                 ssize_t det = detect_graphic_sequence(inbuf + pos, (size_t)n - pos);
                 if (det > 0) {
                     if (gfx) {
@@ -356,7 +447,6 @@ int main(int argc, char **argv) {
                     pos += (size_t)det;
                     continue;
                 } else if (det == -1) {
-                    /* partial: copy remainder into seqbuf */
                     size_t tocopy = (size_t)n - pos;
                     if (tocopy > SEQ_MAX) tocopy = SEQ_MAX;
                     memcpy(seqbuf, inbuf + pos, tocopy);
@@ -364,10 +454,9 @@ int main(int argc, char **argv) {
                     pos += tocopy;
                     continue;
                 } else if (det == -2) {
-                    pos += 1; /* skip one byte */
+                    pos += 1;
                     continue;
                 } else {
-                    /* not a graphic sequence: forward as a block until next ESC or end */
                     size_t rem = (size_t)n - pos;
                     size_t j = 0;
                     while (j < rem && inbuf[pos + j] != 0x1B) ++j;
@@ -379,19 +468,18 @@ int main(int argc, char **argv) {
             if (gfx) fflush(gfx);
         }
 
-        /* data from user terminal -> forward to child */
         if (fds[1].revents & POLLIN) {
             ssize_t n = read(in_fd, stdinbuf, sizeof(stdinbuf));
             if (n <= 0) break;
             (void)write_all(master_fd, stdinbuf, (size_t)n);
         }
 
-        /* check child exit */
         pid_t w = waitpid(child_pid, &status, WNOHANG);
         if (w == child_pid) break;
     }
 
     if (gfx) fclose(gfx);
+    if (dumpf) fclose(dumpf);
     close(master_fd);
     restore_term();
     waitpid(child_pid, &status, 0);
