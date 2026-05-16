@@ -15,12 +15,6 @@
  *  GFX_PREFIX (optional): if set and non-empty, only sequences that start with this
  *                         prefix (after OSC/DCS/etc.) are intercepted.
  *  GFX_DEBUG  (optional): if set to 1, prints debug info to stderr about captures.
- *
- * Notes:
- *  - conservative default: do NOT intercept CSI sequences; only intercept OSC/DCS/etc.
- *    when a non-empty GFX_PREFIX is provided (avoids capturing normal terminal control).
- *  - partial sequence buffering with SEQ_MAX limit
- *  - forwards SIGWINCH, SIGINT, SIGTERM to child
  */
 
 #define _XOPEN_SOURCE 700
@@ -152,8 +146,15 @@ static void propagate_winsize(int master_fd, int in_fd) {
  *  - Empty gfx_prefix is treated as unset (see initialization in main).
  */
 static ssize_t detect_graphic_sequence(const unsigned char *buf, size_t len) {
-    if (len < 2) return -1;
+    /* If no bytes available, need more */
+    if (len == 0) return -1;
+
+    /* If first byte is not ESC, it's not a control sequence */
     if (buf[0] != 0x1B) return 0;
+
+    /* If we have only ESC and no second byte yet, need more */
+    if (len < 2) return -1;
+
     unsigned char second = buf[1];
 
     /* CSI: ESC [ -> do not intercept */
