@@ -2,7 +2,7 @@
  *
  * PTY launcher + graphic escape sequence splitter for IRAF.
  * - runs a command under a PTY
- * - intercepts CSI/OSC/DCS/PM/APC and vendor private sequences
+ * - intercepts selected graphic escape sequences (configurable)
  * - appends intercepted sequences to gfx.log (binary)
  * - forwards all other bytes to the original terminal (stdout)
  * - propagates terminal window size (winsize) to the slave PTY and forwards SIGWINCH
@@ -11,8 +11,14 @@
  *  Linux:  gcc -std=c11 -O2 -Wall -Wextra -o graphicsplitter graphicsplitter.c -lutil
  *  macOS:  gcc -std=c11 -O2 -Wall -Wextra -o graphicsplitter graphicsplitter.c
  *
+ * Usage:
+ *  GFX_PREFIX (optional): if set and non-empty, only sequences that start with this
+ *                         prefix (after OSC/DCS/etc.) are intercepted.
+ *  GFX_DEBUG  (optional): if set to 1, prints debug info to stderr about captures.
+ *
  * Notes:
- *  - portable raw terminal setup (no cfmakeraw dependency)
+ *  - conservative default: do NOT intercept CSI sequences; only intercept OSC/DCS/etc.
+ *    when a non-empty GFX_PREFIX is provided (avoids capturing normal terminal control).
  *  - partial sequence buffering with SEQ_MAX limit
  *  - forwards SIGWINCH, SIGINT, SIGTERM to child
  */
@@ -44,6 +50,10 @@ static struct termios orig_term;
 static int raw_fd_for_restore = -1;
 static pid_t child_pid = -1;
 static volatile sig_atomic_t winch_pending = 0;
+
+/* configuration: prefix for graphic sequences and debug flag */
+static const char *gfx_prefix = NULL;
+static int gfx_debug = 0;
 
 /* restore terminal attributes at exit */
 static void restore_term(void) {
@@ -77,6 +87,22 @@ static int set_raw_terminal(int fd) {
     return 0;
 }
 
+/* write all bytes reliably (handles EINTR, partial writes) */
+static ssize_t write_all(int fd, const void *buf, size_t count) {
+    const unsigned char *p = buf;
+    size_t left = count;
+    while (left > 0) {
+        ssize_t w = write(fd, p, left);
+        if (w < 0) {
+            if (errno == EINTR) continue;
+            return -1;
+        }
+        left -= (size_t)w;
+        p += w;
+    }
+    return (ssize_t)count;
+}
+
 /* forward signal to child process */
 static void forward_signal(int sig) {
     if (child_pid > 0) kill(child_pid, sig);
@@ -106,35 +132,40 @@ static void propagate_winsize(int master_fd, int in_fd) {
     if (got) {
         /* set winsize on master PTY (propagates to slave) */
         (void)ioctl(master_fd, TIOCSWINSZ, &ws);
+        if (gfx_debug) {
+            fprintf(stderr, "gfx: propagated winsize to master_fd\n");
+        }
     }
 }
 
-/* Detect graphic sequences (CSI, OSC, DCS/PM/APC-like).
+/* Detect graphic sequences (conservative, prefix-based).
  * Return values:
  *  >0  : number of bytes that form a complete graphic sequence
  *   0  : not a graphic sequence (caller should forward first byte(s))
  *  -1  : need more bytes (partial sequence)
  *  -2  : sequence too long (error)
+ *
+ * Behavior:
+ *  - CSI (ESC [) is NOT treated as graphic (forwarded).
+ *  - OSC (ESC ]) and DCS/PM/APC (ESC P / ESC ^ / ESC _) are only treated as
+ *    graphic if gfx_prefix is non-NULL and the payload starts with that prefix.
+ *  - Empty gfx_prefix is treated as unset (see initialization in main).
  */
 static ssize_t detect_graphic_sequence(const unsigned char *buf, size_t len) {
-    if (len < 2) return -1; /* need more */
-    if (buf[0] != 0x1B) return 0; /* not ESC */
-
+    if (len < 2) return -1;
+    if (buf[0] != 0x1B) return 0;
     unsigned char second = buf[1];
 
-    /* CSI: ESC [ ... final byte in 0x40..0x7E */
-    if (second == '[') {
-        for (size_t i = 2; i < len; ++i) {
-            unsigned char c = buf[i];
-            if (c >= 0x40 && c <= 0x7E) return (ssize_t)(i + 1);
-            if (i + 1 >= SEQ_MAX) return -2;
-        }
-        return -1;
-    }
+    /* CSI: ESC [ -> do not intercept */
+    if (second == '[') return 0;
 
     /* OSC: ESC ] ... BEL or ESC ] ... ESC '\' */
     if (second == ']') {
-        for (size_t i = 2; i < len; ++i) {
+        if (!gfx_prefix) return 0; /* conservative: forward normal OSC */
+        size_t pref_len = strlen(gfx_prefix);
+        if (len < 2 + pref_len) return -1;
+        if (memcmp(buf + 2, gfx_prefix, pref_len) != 0) return 0; /* not our OSC */
+        for (size_t i = 2 + pref_len; i < len; ++i) {
             if (buf[i] == 0x07) return (ssize_t)(i + 1); /* BEL */
             if (i + 1 < len && buf[i] == 0x1B && buf[i+1] == '\\') return (ssize_t)(i + 2);
             if (i + 1 >= SEQ_MAX) return -2;
@@ -144,37 +175,37 @@ static ssize_t detect_graphic_sequence(const unsigned char *buf, size_t len) {
 
     /* DCS / PM / APC / vendor private strings: ESC P / ESC ^ / ESC _ ... ESC '\' */
     if (second == 'P' || second == '^' || second == '_' ) {
-        for (size_t i = 2; i < len; ++i) {
+        if (!gfx_prefix) return 0; /* conservative: do not intercept */
+        size_t pref_len = strlen(gfx_prefix);
+        if (len < 2 + pref_len) return -1;
+        if (memcmp(buf + 2, gfx_prefix, pref_len) != 0) return 0; /* not our DCS */
+        for (size_t i = 2 + pref_len; i < len; ++i) {
             if (i + 1 < len && buf[i] == 0x1B && buf[i+1] == '\\') return (ssize_t)(i + 2);
             if (i + 1 >= SEQ_MAX) return -2;
         }
         return -1;
     }
 
-    /* Not a recognized graphic sequence */
     return 0;
-}
-
-/* write all bytes reliably (handles EINTR, partial writes) */
-static ssize_t write_all(int fd, const void *buf, size_t count) {
-    const unsigned char *p = buf;
-    size_t left = count;
-    while (left > 0) {
-        ssize_t w = write(fd, p, left);
-        if (w < 0) {
-            if (errno == EINTR) continue;
-            return -1;
-        }
-        left -= (size_t)w;
-        p += w;
-    }
-    return (ssize_t)count;
 }
 
 int main(int argc, char **argv) {
     if (argc < 2) {
         fprintf(stderr, "Usage: %s <cmd> [args...]\n", argv[0]);
         return 2;
+    }
+
+    /* configure which sequences to treat as graphic (optional) */
+    const char *env_pref = getenv("GFX_PREFIX");
+    if (env_pref && env_pref[0] == '\0') {
+        /* treat empty string as unset to avoid matching everything */
+        env_pref = NULL;
+    }
+    gfx_prefix = env_pref;
+    const char *dbg = getenv("GFX_DEBUG");
+    gfx_debug = (dbg && (dbg[0] == '1' || dbg[0] == 'y' || dbg[0] == 'Y')) ? 1 : 0;
+    if (gfx_debug) {
+        fprintf(stderr, "gfx: GFX_PREFIX=%s GFX_DEBUG=%d\n", gfx_prefix ? gfx_prefix : "(null)", gfx_debug);
     }
 
     /* prefer to set raw on stdin if it's a tty, otherwise try /dev/tty */
@@ -187,7 +218,6 @@ int main(int argc, char **argv) {
         int devtty = open("/dev/tty", O_RDWR | O_NOCTTY);
         if (devtty >= 0) {
             if (set_raw_terminal(devtty) < 0) perror("set_raw_terminal(/dev/tty)");
-            /* keep devtty only for restore; still read from stdin */
             close(devtty);
         } else {
             /* not a tty; continue without raw mode */
@@ -283,7 +313,14 @@ int main(int argc, char **argv) {
                     pos += tocopy;
                     ssize_t det = detect_graphic_sequence(seqbuf, seq_len);
                     if (det > 0) {
-                        if (gfx) fwrite(seqbuf, 1, det, gfx);
+                        if (gfx) {
+                            fwrite(seqbuf, 1, det, gfx);
+                            if (gfx_debug) {
+                                fprintf(stderr, "gfx: captured (partial-buffer) %zd bytes, first: ", det);
+                                for (size_t k = 0; k < (size_t)det && k < 8; ++k) fprintf(stderr, "%02x ", seqbuf[k]);
+                                fprintf(stderr, "\n");
+                            }
+                        }
                         size_t remain = seq_len - det;
                         if (remain) memmove(seqbuf, seqbuf + det, remain);
                         seq_len = remain;
@@ -292,6 +329,7 @@ int main(int argc, char **argv) {
                         continue; /* need more bytes */
                     } else if (det == -2) {
                         /* too long: drop and reset */
+                        if (gfx_debug) fprintf(stderr, "gfx: sequence too long, dropping\n");
                         seq_len = 0;
                         continue;
                     } else {
@@ -306,7 +344,14 @@ int main(int argc, char **argv) {
                 /* no partial sequence: detect starting at inbuf+pos */
                 ssize_t det = detect_graphic_sequence(inbuf + pos, (size_t)n - pos);
                 if (det > 0) {
-                    if (gfx) fwrite(inbuf + pos, 1, (size_t)det, gfx);
+                    if (gfx) {
+                        fwrite(inbuf + pos, 1, (size_t)det, gfx);
+                        if (gfx_debug) {
+                            fprintf(stderr, "gfx: captured %zd bytes, first: ", det);
+                            for (size_t k = 0; k < (size_t)det && k < 8; ++k) fprintf(stderr, "%02x ", inbuf[pos + k]);
+                            fprintf(stderr, "\n");
+                        }
+                    }
                     pos += (size_t)det;
                     continue;
                 } else if (det == -1) {
