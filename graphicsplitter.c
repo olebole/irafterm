@@ -260,6 +260,7 @@ int main(int argc, char **argv) {
     }
 
     if (pid == 0) {
+        setenv("XGTERM", "1", 1);
         execvp(argv[1], &argv[1]);
         perror("execvp");
         _exit(127);
